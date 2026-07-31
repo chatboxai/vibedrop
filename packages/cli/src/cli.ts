@@ -15,7 +15,7 @@ const program = new Command();
 program
   .name("vibedrop")
   .description("Deploy static sites from your agent in seconds.")
-  .version("0.2.0");
+  .version("0.3.0");
 
 program
   .command("deploy")
@@ -25,8 +25,25 @@ program
     "slug of an existing site you already deployed — redeploys to the same URL",
   )
   .option("-t, --title <title>", "site title")
+  .option("--public", "publish to the moderated Explore gallery and allow search indexing")
+  .option("--unlisted", "keep the site link-only and out of search results")
   .option("-p, --password <password>", "password-protect the site (Pro)")
-  .action(async (dir: string, opts: { slug?: string; title?: string; password?: string }) => {
+  .action(async (dir: string, opts: {
+    slug?: string;
+    title?: string;
+    password?: string;
+    public?: boolean;
+    unlisted?: boolean;
+  }) => {
+    if (opts.public && opts.unlisted) fail("--public and --unlisted cannot be used together");
+    if (opts.public && opts.password !== undefined) {
+      fail("--public and --password cannot be used together; password-protected sites are link-only");
+    }
+    const visibility = opts.public
+      ? "public" as const
+      : opts.unlisted || opts.password !== undefined
+        ? "unlisted" as const
+        : undefined;
     const cfg = await loadConfig();
     const client = new VibedropClient(cfg);
     if (!cfg.apiKey) {
@@ -43,18 +60,17 @@ program
     process.stderr.write(kleur.dim(`Uploading ${(zip.length / 1024).toFixed(1)} KB...\n`));
     try {
       const authedClient = new VibedropClient(cfg);
-      const { site, claimUrl } = await authedClient.deploy(zip, { slug: opts.slug, title: opts.title });
-      if (opts.password !== undefined) {
-        try {
-          await authedClient.update(site.slug, { password: opts.password });
-        } catch (e) {
-          handleApiError(e);
-        }
-      }
+      const { site, claimUrl } = await authedClient.deploy(zip, {
+        slug: opts.slug,
+        title: opts.title,
+        visibility,
+        password: opts.password,
+      });
       console.log();
       console.log(kleur.green().bold("✔ Deployed"));
       console.log(`  ${kleur.cyan(site.url)}`);
       if (opts.password) console.log(kleur.dim(`  Password-protected`));
+      console.log(kleur.dim(`  Visibility: ${visibility ?? site.visibility}`));
       if (site.expiresAt) {
         console.log(kleur.dim(`  Expires ${site.expiresAt}`));
       }

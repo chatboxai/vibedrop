@@ -18,10 +18,30 @@ export type SiteInfo = {
   sizeBytes: number;
   fileCount: number;
   hasAd: boolean;
+  brandingEnabled: boolean;
   hasPassword: boolean;
+  messagesEnabled: boolean;
+  visibility: Visibility;
   title: string | null;
   createdAt: string;
   updatedAt: string;
+};
+
+export type Visibility = "unlisted" | "public";
+
+export type DeployOptions = {
+  slug?: string;
+  title?: string;
+  visibility?: Visibility;
+  password?: string;
+};
+
+export type SiteUpdate = {
+  password?: string | null;
+  title?: string | null;
+  visibility?: Visibility;
+  messagesEnabled?: boolean;
+  brandingEnabled?: boolean;
 };
 
 /**
@@ -74,12 +94,14 @@ export class VibedropClient {
    */
   async deploy(
     zip: Uint8Array,
-    opts: { slug?: string; title?: string } = {},
+    opts: DeployOptions = {},
   ): Promise<DeployResult> {
     const form = new FormData();
     form.append("zip", new Blob([zip], { type: "application/zip" }), "site.zip");
     if (opts.slug) form.append("slug", opts.slug);
     if (opts.title) form.append("title", opts.title);
+    if (opts.visibility) form.append("visibility", opts.visibility);
+    if (opts.password !== undefined) form.append("password", opts.password);
     const res = await this.request<{ site: SiteInfo; claimUrl: string | null }>(
       "/v1/sites",
       { method: "POST", body: form },
@@ -89,7 +111,7 @@ export class VibedropClient {
 
   /**
    * Deploy a single HTML string without a filesystem. Intended for MCP and
-   * other agent callers that generate HTML in-memory. Body cap is 1 MB; use
+   * other agent callers that generate HTML in-memory. Body cap is 16 MB; use
    * {@link deploy} with a zipped directory for larger sites.
    *
    * As with {@link deploy}, `slug` is update-only — must point at an existing
@@ -97,7 +119,7 @@ export class VibedropClient {
    */
   async deployInline(
     html: string,
-    opts: { slug?: string; title?: string } = {},
+    opts: DeployOptions = {},
   ): Promise<DeployResult> {
     const res = await this.request<{ site: SiteInfo; claimUrl: string | null }>(
       "/v1/sites/inline",
@@ -108,6 +130,8 @@ export class VibedropClient {
           html,
           ...(opts.slug ? { slug: opts.slug } : {}),
           ...(opts.title ? { title: opts.title } : {}),
+          ...(opts.visibility ? { visibility: opts.visibility } : {}),
+          ...(opts.password !== undefined ? { password: opts.password } : {}),
         }),
       },
     );
@@ -132,7 +156,7 @@ export class VibedropClient {
     await this.request<{ ok: true }>(`/v1/sites/${slug}`, { method: "DELETE" });
   }
 
-  async update(slug: string, patch: { password?: string | null; title?: string | null }): Promise<SiteInfo> {
+  async update(slug: string, patch: SiteUpdate): Promise<SiteInfo> {
     const res = await this.request<{ site: SiteInfo }>(`/v1/sites/${slug}`, {
       method: "PATCH",
       headers: { "content-type": "application/json" },

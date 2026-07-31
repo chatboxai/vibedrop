@@ -15,7 +15,7 @@ import {
 
 const server = new McpServer({
   name: "vibedrop",
-  version: "0.2.0",
+  version: "0.3.0",
 });
 
 async function ensureClient() {
@@ -40,8 +40,9 @@ function deployMessage(result: DeployResult): string {
   ];
   if (site.expiresAt) {
     lines.push(`Expires: ${site.expiresAt}`);
-    lines.push(`(Free tier: 7 days unclaimed, 30 days once claimed. Upgrade at https://vibedrop.cc/pricing for permanent hosting.)`);
+    lines.push("(Free link-only sites use a rolling 30-day inactivity window.)");
   }
+  lines.push(`Visibility: ${site.visibility}`);
   if (claimUrl) {
     lines.push("");
     lines.push("To save this site into a VibeDrop account (no password needed — just email):");
@@ -53,7 +54,7 @@ function deployMessage(result: DeployResult): string {
 
 server.tool(
   "deploy_site",
-  "Deploy a directory as a public static website. Returns a shareable URL like https://abc123.vibedrop.site that anyone can visit without installing anything. Free, no account required, no credit card. Use whenever the user wants to share a localhost page, preview a demo, or publish HTML that an AI generated. To update an existing site (keep the same URL on redeploy), pass its `slug`.",
+  "Deploy a directory as a shareable static website. New sites are unlisted by default; choose public only when the user explicitly wants moderated Explore discovery and search indexing. Returns a URL like https://abc123.vibedrop.site that visitors can open without installing anything. To update an existing site at the same URL, pass its slug.",
   {
     directory: z
       .string()
@@ -70,13 +71,22 @@ server.tool(
       .string()
       .optional()
       .describe("Title for the deployed site"),
+    visibility: z
+      .enum(["unlisted", "public"])
+      .optional()
+      .describe(
+        "unlisted keeps the site link-only and out of search; public submits it to the moderated Explore gallery and allows indexing",
+      ),
     password: z
       .string()
       .optional()
       .describe("Password-protect the site (Pro feature). Visitors will need this password to view it."),
   },
-  async ({ directory, slug, title, password }) => {
+  async ({ directory, slug, title, visibility, password }) => {
     try {
+      if (visibility === "public" && password !== undefined) {
+        throw new Error("public and password cannot be used together; password-protected sites are link-only");
+      }
       const absDir = resolve(directory);
       const s = await stat(absDir).catch(() => null);
       if (!s?.isDirectory()) {
@@ -85,10 +95,12 @@ server.tool(
 
       const client = await ensureClient();
       const zip = await packDir(absDir);
-      const result = await client.deploy(zip, { slug, title });
-      if (password !== undefined) {
-        await client.update(result.site.slug, { password });
-      }
+      const result = await client.deploy(zip, {
+        slug,
+        title,
+        visibility: password !== undefined ? "unlisted" : visibility,
+        password,
+      });
       return { content: [{ type: "text" as const, text: deployMessage(result) }] };
     } catch (e) {
       return { content: [{ type: "text" as const, text: formatError(e) }], isError: true };
@@ -98,12 +110,12 @@ server.tool(
 
 server.tool(
   "deploy_html",
-  "Deploy a single HTML string as a public static website. Use this instead of deploy_site when you're generating HTML in-memory and don't have it written to disk — ideal for agent-authored pages. Returns a shareable URL the same way deploy_site does. Body cap is 1 MB; for larger or multi-file sites, write the files to a directory and use deploy_site.",
+  "Deploy a single HTML string as a static website. Use this instead of deploy_site when you're generating HTML in-memory and don't have it written to disk — ideal for agent-authored pages. Returns a shareable URL the same way deploy_site does. Body cap is 16 MB; for larger or multi-file sites, write the files to a directory and use deploy_site.",
   {
     html: z
       .string()
       .describe(
-        "Complete HTML document (including <!doctype html>, <html>, <head>, <body>). Will be served as index.html. Max 1 MB.",
+        "Complete HTML document (including <!doctype html>, <html>, <head>, <body>). Will be served as index.html. Max 16 MB.",
       ),
     slug: z
       .string()
@@ -117,11 +129,31 @@ server.tool(
       .describe(
         "Optional site title. If omitted, the server extracts the <title> tag from the HTML.",
       ),
+    visibility: z
+      .enum(["unlisted", "public"])
+      .optional()
+      .describe(
+        "unlisted keeps the site link-only and out of search; public submits it to the moderated Explore gallery and allows indexing",
+      ),
+    password: z
+      .string()
+      .min(4)
+      .max(128)
+      .optional()
+      .describe("Password-protect the site (Pro feature). Password-protected sites are link-only."),
   },
-  async ({ html, slug, title }) => {
+  async ({ html, slug, title, visibility, password }) => {
     try {
+      if (visibility === "public" && password !== undefined) {
+        throw new Error("public and password cannot be used together; password-protected sites are link-only");
+      }
       const client = await ensureClient();
-      const result = await client.deployInline(html, { slug, title });
+      const result = await client.deployInline(html, {
+        slug,
+        title,
+        visibility: password !== undefined ? "unlisted" : visibility,
+        password,
+      });
       return { content: [{ type: "text" as const, text: deployMessage(result) }] };
     } catch (e) {
       return { content: [{ type: "text" as const, text: formatError(e) }], isError: true };
